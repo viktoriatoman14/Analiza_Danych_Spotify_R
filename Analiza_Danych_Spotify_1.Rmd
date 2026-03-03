@@ -1,0 +1,506 @@
+
+---
+title: "Analiza danych Spotify"
+author: "Viktoria Toman"
+date: "2026-01-13"
+output:
+  html_document: default
+---
+Celem tego projektu jest przeanalizowanie zestawu najpopularniej słuchanych utworów na platformie Spotify w roku 2025. 
+
+Dane pochodzą z https://www.kaggle.com
+
+## Wytłumaczenie poszczególnych nazw kategorii w bazie danych:
+
+Energy	A measure of intensity and activity. Typically, energetic tracks feel fast, loud, and noisy.
+
+Tempo	The speed of a track, measured in beats per minute (BPM).
+
+Danceability	A score describing how suitable a track is for dancing based on tempo, rhythm stability, beat strength and overall regularity.
+
+Loudness	The overall loudness of a track in decibels (dB). Higher values indicate louder tracks overall
+.
+Liveness	The likelihood of a track being performed live. Higher values suggest more audience presence.
+
+Valence	The overall musical positiveness(emotion) of a track. High valence sounds happy; low valence sounds sad or angry.
+
+Speechiness	Measures the presence of spoken words.
+
+Instrumentalness	The likelihood a track contains no vocals. Values closer to 1.0 suggest solely instrumental tracks.
+
+Mode	Indicates the modality of the track.
+
+Key	The musical key, represented as an integer from 0 to 11, mapping to standard Pitch class notation.
+
+Duration_ms	The length of the track in milliseconds.
+
+Acousticness	A confidence measure of whether a track is acoustic(1) or not(0).
+
+Track Popularity	A score (0–100) which is calculated based on total number of streams in relation to other songs.
+
+## Instalowanie pakietów oraz przygotowanie zestawu danych
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(tidyr)
+library(mice)
+library(corrplot)
+
+high_popularity_spotify_data <- read_csv("high_popularity_spotify_data.csv")
+
+dane <- high_popularity_spotify_data
+dane <- na.omit(dane)
+dane<- unique(dane)    
+dane <- distinct(dane, track_name, track_artist, .keep_all = TRUE)
+
+dane$key <- factor(
+  dane$key,
+  levels = 0:11,
+  labels = c(
+    "C", "C♯/D♭", "D", "D♯/E♭", "E", "F",
+    "F♯/G♭", "G", "G♯/A♭", "A", "A♯/B♭", "B"
+  )
+)
+
+dane$mode <- factor(dane$mode, levels = 0:1, labels = c("mol", "dur"))
+
+
+dane$tonacja = paste(dane$key, ifelse(dane$mode == 1, "dur", "mol"), sep = " - ")
+
+dane <- dane[, c("energy", "tempo", "danceability", "playlist_genre", "loudness", "liveness", "valence", "track_artist", "speechiness", "track_popularity", "track_album_name", "track_name", "instrumentalness", "duration_ms", "playlist_subgenre", "tonacja", "mode")]
+
+md.pattern(dane, rotate.names = TRUE)
+```
+
+## Wstępnan analiza danych
+
+Poniżej znajdują się podstawowe statystyki dla naszego zestawu danych.
+
+```{r}
+head(dane, 5)
+tail(dane, 5)
+
+dim(dane)
+names(dane)
+class(dane)
+
+summary(dane) 
+
+```
+Mamy do czynienia z 17 kolumnami danych oraz 1419 rekordami popularnych piosenek. 
+Nazwy, kategorie oraz statystyki opisowe danych możemy poznać posługując się powyższą tabelą. 
+
+
+### 1. Analiza Gatunku playlist
+```{r}
+ilosc_gatunków <- dane %>%
+  count(playlist_genre)%>%
+  arrange(desc(n))
+
+head(ilosc_gatunków, 5)
+
+ggplot(dane, aes(x = playlist_genre)) +
+  geom_bar() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,
+      hjust = 1))+
+  labs(title = "Liczebność utworów w gatunkach",
+       x = "Gatunek",
+       y = "Liczba utworów")
+
+
+
+```
+
+Na powyższym wykresie jest pokazana liczba utworów o danym gatunku.
+
+W naszym zestawie danych znajduje się 28 gatunków muzyki. 
+
+Dominuje tutaj definitywnie pop, z liczbą 288 piosenek. Oznacza to, że jest to najczęściej słuchany gatunek. Kolejnymi są Rock (205) i Hip-hop (201). Najmniej słuchanymi (lecz wciąż popularnymi gatunkami) są jazz i soul (1).
+
+
+### 2. Którzy artyści mają w tym zestawieniu po kilka utworów? Kto ma najwięcej?
+```{r}
+
+artysci_max_utworow <- dane %>%
+  count(track_artist, sort = TRUE)
+
+head(artysci_max_utworow, 5)
+
+gatunki_Bad_Bunny <- dane %>%
+  filter(track_artist=="Bad Bunny")%>%
+  group_by(playlist_genre)%>%
+  summarise(liczba_utworow = n())
+
+head(gatunki_Bad_Bunny, 5)
+
+muzyka_latin <- dane%>%
+  filter(playlist_genre=="latin")%>%
+  count(track_artist, sort = TRUE)
+
+head(muzyka_latin, 5)
+
+artysci_z_jednym_hitem <- sum(artysci_max_utworow$n==1)
+print(artysci_z_jednym_hitem)
+
+srednia_ilosc_utworow <- mean(artysci_max_utworow$n, na.rm = TRUE)
+odchylenie_ilosci_utworow <- sd(artysci_max_utworow$n, na.rm = TRUE)
+
+```
+
+
+Artystą z największą liczbą hitów jest Bad Bunny z 20 utworami na liście. Kolejnymi są zespół Linkin Park z 14 utworami i Hozier oraz Sabrina Carpenter z 11 utworami.
+Artystów z jednym hitem, którzy wybili się do mainstreamu jest 848.
+
+Mimo, iż najpopularniejszym gatunkiem jest zdecydowanie pop, artystą z największą liczbą utworów jest Bad Bunny, który tworzy muzykę latynoską. (muzyka latynoska jest na 4 miejscu najpopularniejszych gatunków)
+Mozna wyciagnąć wniosek, że do mainstreamu w kategorii muzyka latynoska przebił się głównie jeden artysta. Pozostali popularni wykonawcy muzyki latynoskiej mają wybite do mainstreamu góra 3 utwory. 
+
+Pop jest popularny, zatem jest to gatunek, który tworzy mnóstwo artystów.Nie ma on jednego definiującego go artystę. Jest się też więc znacznie trudniej wybić.
+
+Artysta wybija się średnio z jednym hitem, ponieważ średnia utworów przypadająca na jednego artystę to 1.375. Odchylenie standardowe to 1.164. Jest zatem niewielkie. Oznacza to, że mało jest artystów, którzy wybijają się z więcej niż dwoma piosenkami. Jest ich zaledwie 80 z 1032 wszystkich artystów w tym zestawieniu.
+
+### 3. Najpopularniejsze albumy
+```{r}
+najpopularniejsze_albumy <- dane%>%
+  count(track_album_name, sort = TRUE)
+head(najpopularniejsze_albumy, 5)
+
+dane_filtered <- dane[, c("track_name", "playlist_genre", "track_album_name", "track_artist")]
+
+gatunek_UnVerano <- dane_filtered%>%
+  filter(track_album_name=="Un Verano Sin Ti")
+
+gatunek_YHLQMDLG <- dane_filtered%>%
+  filter(track_album_name=="YHLQMDLG")
+
+gatunek_CHROMAKOPIA  <- dane_filtered%>%
+  filter(track_album_name=="CHROMAKOPIA")
+
+head(gatunek_UnVerano, 5)
+head(gatunek_YHLQMDLG, 5)
+head(gatunek_CHROMAKOPIA, 5)
+
+```
+
+Najpopularniejszym albumem jest Un Verano Sin Ti, czyli Album artysty z największą liczbą popularnych utworów - Bad Bunny.Ponadto aż dwa albumy wrtysty znajdują się na pierwszych miejscach. Kolejnym jest YHLQMDLG. Można więc stwierdzić, że w gatunku muzyka latynoska przeważa muzyka artysty. Inne gatunki mają większą różnorodność i są tworzone przez większą liczbę artystów. Na miejscu 3 mamy Hip-hop i pop.
+
+
+### 4. Analiza podgatunków
+```{r}
+table(dane$playlist_subgenre)
+
+tabela_podgatunki <- dane %>%
+  count(playlist_genre, playlist_subgenre, name = "liczba_utworow", sort = TRUE)
+
+podgatunki_na_gatunek <- dane %>%
+  distinct(playlist_genre, playlist_subgenre) %>%
+  count(playlist_genre, name = "liczba_podgatunkow", sort = TRUE)
+
+
+
+head(tabela_podgatunki, 5)
+head(podgatunki_na_gatunek, 5)
+srednia__podgatunkow <- mean(podgatunki_na_gatunek$liczba_podgatunkow)
+odchylenie_podgatunkow <- sd(podgatunki_na_gatunek$liczba_podgatunkow)
+
+print(srednia__podgatunkow)
+print(odchylenie_podgatunkow)
+
+```
+Najpopularniejszym podgatunkiem jest modern z liczą aż 295 utworów. Najmniej popularny podgatunek to zdecydowanie scandi. Na powyższym wykresie możemy zobaczyć jak podgatunki wliczają się do gatunków.
+
+średnia liczba podgatunków przypadających na jeden gatunek to 2.46, co oznacza, że przeciętny gatunek obejmuje około 2–3 podgatunków. Odchylenie standardowe to 2.46.Większość gatunków ma bardzo niewiele podgatunków. Jedynie niewiele mają ich więcej.
+
+
+### 5. Analiza podgatunków muzyki pop
+```{r}
+ggplot(dane[dane$playlist_genre == "pop", ], aes(x = playlist_subgenre)) +
+  geom_bar() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5,
+      hjust = 1))+
+  labs(title = "Liczebność podgatunków muzyki pop",
+       x = "Podgatunek",
+       y = "Liczba utworów")
+```
+
+Dzięki wykresowi możemy zauważyć, że najpopularniejszym podgatunkiem popu jest throwback z liczbą 117 utworów. Najpopularniejszy Rock to zaś Rock klasyczny (91 utworów).
+Pop jest podzielony w tym zestawieniu na 6 podgatunków, z czego scandi jest zdecydownie tym najmniej popularnym. Throwback przewyższa ilością soft, a nawet mainstream.
+
+
+### 6. Przeciętny czas trwania utworu
+```{r}
+dane$duration_min <- (dane$duration_ms)/60000
+
+a <- mean(dane$duration_min)
+
+print(a)
+
+print( sd(dane$duration_min))
+
+print(quantile(dane$duration_min, probs = c(0.25, 0.5, 0.75)))
+
+
+```
+
+Przecietny czas jednego utworu to 3 i pół minuty. Dokładnie 3:35 minut.
+
+### 7. Popularność
+```{r}
+dane[order(-dane$track_popularity), c("track_name", "playlist_genre", "track_popularity", "track_artist")]  
+
+agg <- aggregate(track_popularity ~ playlist_genre, dane, median)
+agg[order(-agg$track_popularity), ]
+
+head(dane[order(-dane$track_popularity), c("track_name", "playlist_genre", "track_popularity", "track_artist")], 5)
+head(agg[order(-agg$track_popularity), ], 5)
+```
+
+Najpopularniejszymi utworami. są "Die with a smile" Lady Gagi i Bruno Marsa oraz "APT." ROSE i Bruno Marsa. Można zatem stwierdzić, że Bruno Mars jest wykonawca dwóch najpopularniejszych piosenek roku 2025.
+
+Mediana popularności utworów w różnych gatunkach pokazuje, że gatunki gaming, electronic i folk mają najwyższą popularność wśród mainstreamowych utworów.
+
+### 8. Tonacja
+```{r}
+najpopularniejsza_tonacja <- dane %>%
+  count(tonacja, sort = TRUE)
+print(najpopularniejsza_tonacja)
+
+dur_mol <- dane %>%
+  count(mode,)
+print(dur_mol)
+```
+
+Najpopularniejszą tonacją jest zdecydowanie Cis - dur. Kolejne są D- dur i C - dur. Najmniej popularnymi tonacjami jest dis-mol i Dis-dur.
+Przeważają zdecydowanie utwory durowe.
+
+## Pytania badawcze
+
+### 1. Czy poszczególne gatunki popularnej muzyki pisane są częściej w konkretnej tonacji?
+
+Zależność między gatunkiem,a  tonacją
+```{r}
+tonacja_gatunek <- dane %>%
+  count(playlist_genre, tonacja, sort = TRUE)
+
+
+ggplot(tonacja_gatunek, aes(x = tonacja, y = playlist_genre, fill = n)) +
+  geom_tile() +
+  scale_fill_gradient(low = "lightblue", high = "coral") +
+  theme_light(base_size = 12) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  labs(title = "Tonacja utworów w zależności od gatunków",
+       x = "Tonacja",
+       y = "Gatunek",
+       fill = "Liczba utworów")
+
+
+```
+
+Na podstawie powyższego wykresu można zauważyć, że Hip-hop jest najczęściej tworzony w tonacji Cis-dur (Des-dur).
+Rocka słuchamy najczęściej w tonacji C-dur, a popu w G-dur.
+Po tym, że hip-hop, pop, rock, latin i electronic maja największą różnorodność, możemy stwierdzić, że mamy o nich najwięcej danych, co potwierdza nasze wcześniejsze wnioski. 
+
+
+### 2. Gatunki, a rodzaje gamy (dur/mol)
+
+Sprawdzimy, czy niektóre gatunki częściej są pisane w tonacji durowej, bądź molowej. Zbadamy więc charakter gatunków
+```{r}
+gatunki_durmol <- dane %>%
+  group_by(playlist_genre)%>%
+  count(mode, sort = TRUE)
+print(gatunki_durmol)
+
+ggplot(gatunki_durmol, aes(x = playlist_genre, y = n, fill = mode))+
+  geom_bar(stat = "identity", position = position_dodge(width = 0.9))+
+  scale_fill_manual(values = c("dur"="coral", "mol"="lightblue"))+
+  labs(title = "Liczbowy udział dur/mol w gatunkach", 
+       x = "Gatunek", y = "Ilość utworów", fill = "dur/mol") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+```
+
+W muzyce pop przeważa tonacja durowa, podobnie jak w rocku. 
+Hip-hop ma niemal równomierny podział. Przeważa tu dur, lecz jest to bardzo mała różnica.
+W muzyce latynoskiej przeważają molowe brzmienia, lecz podobnie i w tym przypadku różnica jest niewielka.
+Muzyka elektroniczna ma więcej molowych brzmień.
+
+### 3. Zależność między tempem, a gatunkiem muzycznym
+
+```{r}
+ggplot(dane, aes(x = playlist_genre, y = tempo)) +
+  geom_boxplot(show.legend = FALSE) +
+  labs(
+    title = "Zależność energii od gatunku",
+    x = "Gatunek",
+    y = "Tempo"
+  ) +
+  theme_light() +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1))
+
+
+mean(dane$tempo[dane$playlist_genre == "pop"], na.rm = TRUE)
+mean(dane$tempo[dane$playlist_genre == "electronic"], na.rm = TRUE)
+
+
+```
+
+Na podstawie wykresów pudełkowych możey zauważyć, że najwięcej wartości odstających znajduje się przy muzyce elektronicznej i popie. Oba gatunki mają bardzo podobne średnie tempo utworów, czyli około 120 BPM.
+Muzyka elektroniczna charakterycuje się małym odchyleniem tempa i wyjątkami (wartościami odstającymi), czyli utworami o mniejszym tempie.
+Pop zaś ma odchylenie większe, a jego wartości odstające to utwory o większym tempie.
+Oznacza to, że te dwa gatunki mają na ogół podobne tempo, lecz jeśli popatrzymy na wartości odstające, to możemy wywnioskować, że twórcy popu są skłonni do zwiększenia tempa, a twórcy muzyki elektronicznej do jego zniejszenia.
+
+Warto zauważyć, że największym tempem charakteryzuje się soul. Dodatkowo warto zauważyć, że wykres pudełkowy dla tego gatunku nie ma wąsów, ani wartości odstających. Mamy jednak jedynie 2 utwory w tym zestawieniu. Można zatem wyciągnąć dwa wnioski:
+1. Soul nie często wchodzi do mainstreamu
+2. Mamy za mało danych, by stwierdzić, czy soul ma realnie największe tempo. Bazujemy na zestawie 1685 najbardziej mainstreamowych utworów, co nie daje nam pełnego obrazu.
+
+Największy odchyleniem standardowym charakteryzuje się muzyka klasyczna, lecz w tym zestawie jest tylko 10 utworów w tej kategorii, zatem nie daje nam to realnego obrazu. 
+Stwierdzenie: W muzyce mainstreamowej największą różnorodnością tempa charakteryzuje się muzyka klasyczna.
+
+
+### 4. Czy poszczególni artyści mają skłonność do pisania utworów w danym trybie?
+
+Zależność między artystą, a trybem (dur/mol)
+```{r}
+artysta_mode <- dane %>%
+  group_by(track_artist) %>%
+  filter(n() > 4) %>%          
+  ungroup() %>%
+  group_by(track_artist, mode) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  complete(track_artist, mode = c("dur", "mol"), fill = list(n = 0))
+
+
+ggplot(artysta_mode, aes(x = track_artist, y = n, fill = mode)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.9))+
+  scale_fill_manual(values = c("dur" = "coral", "mol" = "lightblue")) +
+  labs(title = "Liczba utworów dur/mol dla artystów z ponad 4 piosenkami na liście",
+       x = "Artysta", y = "Liczba utworów", fill = "dur/mol") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+```
+Piosenki Gunna są tylko molowe (na tej liście 5).
+Piosenki Green Day są zaś wyłacznie durowe (8), tak jak USHERa (5), Coldplay (6), Bruno Mars(6).
+Bad Bunny ma wręcz równomierny podział utworów w zależności od trybu.
+Piosenki Lil Baby,Shubh, Linkin Park, Metalica'i i Maroon 5 są tutaj głównie molowe.
+U pozostałych artystów przeważa muzyka durowa.
+
+
+### 5. Zależność między gatunkiem, a energią
+
+```{r}
+ggplot(dane, aes(x = playlist_genre, y = energy)) +
+  geom_boxplot(show.legend = FALSE) +
+  labs(
+    title = "Zależność energii od gatunku",
+    x = "Gatunek",
+    y = "Energia"
+  ) +
+  theme_light() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+Możemy zauważyć, że w tym zestawieniu muzyka klasyczna odznacza się najmniejszą energicznością, a tuż za nią jest lofi oraz jazz.
+Największą średnią energią wyróżniają się punk i metal, a zaraz potem j-pop (japoński pop). 
+Muzyka brazylijska, Rock pop i ambient mają największe odchylenie standardowe. Oznacza to, że to te gatunki są na tej liście najbardziej zróżnicowane pod względem energii.
+
+
+### 6. Związek między tempem, a żywością muzyki
+
+```{r}
+dane %>%
+  ggplot() +
+  geom_point(aes(x = liveness, y = loudness), size = 2, 
+             color = "grey50", alpha = 0.2) +
+  scale_x_log10() + 
+  theme_light(base_size = 14) +
+  coord_cartesian(ylim = c(-25, 0))+
+labs(
+  title = "Związek między żywością a głośnością",
+  x = "Żywość",
+  y = "Głośność (dB)"
+)
+```
+
+Można zauważyć, że głośność skupia się głównie w jednym miejscu, w wyższych rejonach skali. Utwory mają zatem podobną głośnośc. 
+Jedynie pojedyncze piosenki są cichsze (może to jednak wynikać z innego nagrania utworu).Tylko poszczególne, mało żywe utwory charakteryzują się mniejszą głośnością. Utwory żywsze nie mają tendencji do bycia cichszymi.
+Utwory bardziej żywe utrzymują głośność na przeciętnym poziomie.
+
+### 7. Związek między głośnością, a tempem
+```{r}
+dane %>%
+  ggplot() +
+  geom_point(aes(x = tempo, y = loudness), size = 2, 
+             color = "grey50", alpha = 0.2) +
+  theme_light(base_size = 14) +
+  labs(title = "Związek między tempem, a głośnością",
+       x = "tempo",
+       y = "głośność")
+```
+
+Nie ma zależności między głośnością, a tempem. 
+Można tylko wywnioskować, że tempo mieści się zazwyczaj pomiędzy 75 BPM, a 175 BPM.
+Głośność utrzymuje się na jednakowym poziomie, Jedynie pojedyncze utwory są cichsze, lecz nie da się zauważyć związku z tempem.
+
+
+### 8. Popularność utworów, a gatunek
+```{r}
+ggplot(dane, aes(x = playlist_genre, y = track_popularity)) +
+  geom_boxplot(show.legend = FALSE) +
+  labs(
+    title = "Popularność utworów w gatunkach",
+    x = "Gatunek",
+    y = "Popularność"
+  ) +
+  theme_light() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+```
+
+Gatunkiem z największą średnią utworów o wysokiej popularności jest gaming, a zaraz po tym pop. To pop charakteryzuje się największym wąsem. 
+Gatunkami, gdzie tylko kilka utworów się wybiło są ambient i r&b. Maja one aż dwie wartości odstające. Oznacza to, że większość utworów o tych gatunkach charakteryzuje się mniejszą popularnością, lecz czasem pojawiają się utwory, którw zdołają się wybić. 
+
+
+### 9. Rozkłąd Taneczności w zależności od trybu (dur/mol)
+```{r}
+ggplot(dane, aes(x = danceability, fill = mode)) +
+  geom_density(color = NA) + 
+  facet_wrap(~mode, ncol = 1) +           
+  scale_fill_manual(values = c("lightblue", "coral")) +
+  labs(
+    title = "Rozkład Taneczności w zależności od trybu (Mode)",
+    x = "Tanecznośc",
+    y = "Gęstość",
+    fill = "Tryb"
+  ) +
+  theme_minimal()
+
+test_t <- t.test(danceability ~ mode, data = dane)
+
+print(test_t)
+
+```
+
+Co ciekawe utwory molowe, czyli "smutne" odznaczają się większą tanecznością niż utwory durowe "wesołe". Wykresy są jednak bardzo zbliżone do siebie i trzeba pamiętać, że operujemy na podstawie zestawu najpopularniejszych utworów. Gdybyśmy posługiwali się większą ilością danych, zestawienie mogłoby być jeszcze bardziej zbliżone. Nie ma więc zależności miedzy tonacją, a tanecznością. 
+
+Przeprowadzony został test t-Studenta, którego Hipotezą zerową jest fakt, iż utwory molowe charakteryzuja się taką samą ilością utworów o wysokiej taneczności, co utwory durowe. Wartość p-value wpada w obszar krytyczny, co pozwala na jednoznaczne odrzucenie hipotezy zerowej. Otrzymane wyniki wskazują na istotną różnicę taneczności, w zależności od trybu. Potwierdza to, że utwory molowe muzyki populrnej charakteryzują się średnio wyższym współczynnikiem taneczności niż utwory durowe.
+
+Podział na dur = taniecć, mol = smutek uległ zmianie w XX wieku, a różnice te jeszcze bardziej zacierają się wraz z ubiegiem dekad.
+
+## Podsumowanie
+
+Celem projektu było przeprowadzenie dogłębnej analizy najbardziej popularnych utworów 2025 roku wg. platformy Spotify. 
+
+Analiza skupiła się na utworach, które odniosły największy sukces komercyjny. Dane pokazały, że są one zróżnicowane pod kątem technicznym, ale posiadają pewne wspólne cechy (budowa, głośność)
+
+Jednym z najciekawszych odkryć projektu jest relacja między tonacją utworu a jego wskaźnikiem taneczności (danceability). Statystyki pokazują, że wybór skali nie determinuje tego, jak bardzo utwór nadaje się do tańca. 
+Mimo, że intuicja podpowiada, że utwory durowe powinny być bardziej taneczne, statystyki pokazują coś zupełnie odwrornego.
+Analiza wykazała, że utwory molowe muzyki popularnej, uznawane powszechnie za „smutne”, charakteryzują się wyższym współczynnikiem taneczności niż utwory durowe, postrzegane jako „wesołe”. Przeprowadzony test t-Studenta dodatkowo poparł tę hipotezę i wykazał istotność róznic. Można zatem stwierdzić, że współczesna muzyka popularna często łączy smutniejszą harmonię z dynamicznym, tanecznym rytmem.
+Musimy jednak pamiętać, że badania bazowane są na próbie utworów muzyki komercyjnej. W przypadku szerszej próby, obejmującej muzykę o mniejszej popularności, ten wynik mógłby ulec całkowitemu przekształceniu.
+
+Projekt udowodnił, że sukces utworu jest wynikiem wielu czynników, a techniczne parametry muzyczne są tylko jednym z wielu elementów składowych, które nie dają jednoznacznego wzoru na stworzenie hitu. Analiza pozwala jednak na odnalezienie cech wspólnych piosenek muzyki popularnej.
